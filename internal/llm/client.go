@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 )
 
-const baseURL = "https://openrouter.ai/api/v1"
+const (
+	baseURL      = "https://openrouter.ai/api/v1"
+	chatEndpoint = "/chat/completions"
+)
 
 type Client struct {
 	httpClient *http.Client
@@ -28,38 +32,41 @@ func NewClient(apiKey string) *Client {
 }
 
 func (c *Client) ChatCompletion(ctx context.Context, request ChatRequest) (*ChatResponse, error) {
-	req, err := json.Marshal(request)
+	body, err := json.Marshal(request)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshal chat request: %w", err)
 	}
 
-	reqq := bytes.NewReader(req)
-
-	requestt, err := http.NewRequestWithContext(
+	httpReq, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		"https://openrouter.ai/api/v1/chat/completions",
-		reqq,
+		c.baseURL+chatEndpoint,
+		bytes.NewReader(body),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create HTTP request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(requestt)
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("send chat request: %w", err)
 	}
 
-	return resp, nil
-}
+	defer httpResp.Body.Close()
 
-/* type Message struct {
-	Role    string `json:"string"`
-	Content string `json:"content"`
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("openrouter API error: %s", httpResp.Status)
+	}
 
-type ChatRequest struct {
-	Authorization string `json:"string"`
-	Message       []Message
-	MaxTokens     int64 `json:"int"`
+	var chatResp ChatResponse
+
+	if err := json.NewDecoder(httpResp.Body).Decode(&chatResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &chatResp, nil
+
 }
-*/
