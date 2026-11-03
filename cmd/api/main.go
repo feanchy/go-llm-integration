@@ -18,14 +18,6 @@ func main() {
 
 	client := llm.NewClient(apiKey)
 
-	chatReq := llm.ChatRequest{
-		Model:     "openrouter/free",
-		Messages:  input.Messages,
-		MaxTokens: 500,
-	}
-
-	resp, err := client.ChatCompletion(r.Context(), chatReq)
-
 	http.Handle("/", http.FileServer(http.Dir("web")))
 
 	http.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +45,14 @@ func main() {
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintf(w, "Получено сообщений: %d", len(input.Messages))
+
+		chatReq := llm.ChatRequest{
+			Model:     "openrouter/free",
+			Messages:  input.Messages,
+			MaxTokens: 500,
+		}
+		resp, err := client.ChatCompletion(r.Context(), chatReq)
+		fmt.Println(resp, err)
 	})
 	log.Println("Открой http://localhost:8080")
 	log.Fatal(http.ListenAndServe("127.0.0.1:8080", nil))
