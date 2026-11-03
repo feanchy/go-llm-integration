@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Go · Чат</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111513;color:#edf2ed}*{box-sizing:border-box}body{margin:0}main{max-width:820px;margin:auto;padding:28px 22px;min-height:100dvh;display:flex;flex-direction:column}header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #303c33;padding-bottom:20px}h1{font-size:20px;margin:0}small,#status{color:#a9baac;font-size:13px}button,textarea{font:inherit}button{cursor:pointer;border:1px solid #405044;border-radius:12px;background:#24382a;color:#edf2ed;padding:11px 16px}button:disabled{opacity:.45;cursor:default}#messages{flex:1;padding:28px 0;min-height:45vh}.empty{color:#a9baac;margin:12vh 0;text-align:center}.message{margin:0 0 24px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.label{display:block;font-size:12px;color:#a9baac;margin-bottom:6px}.user{background:#1e2921;padding:16px 20px;border-radius:16px;margin-left:12%}.assistant{padding:8px 0}.error{color:#ffb4aa}form{position:sticky;bottom:0;background:#111513;padding-top:12px}textarea{display:block;resize:vertical;width:100%;min-height:100px;max-height:260px;border:1px solid #405044;border-radius:16px;background:#19211b;color:inherit;padding:16px;outline:none}textarea:focus{border-color:#a3d6aa}.actions{display:flex;align-items:center;gap:10px;margin-top:12px}#status{flex:1}footer{color:#819586;font-size:12px;margin:16px 0 0}button:focus-visible{outline:2px solid #a3d6aa;outline-offset:3px}@media(max-width:500px){main{padding:20px 14px}.user{margin-left:5%}header small{display:none}}
+</style>
+<main>
+ <header><h1>Go <span style="color:#a3d6aa">/</span> Чат</h1><small>Твой локальный LLM-клиент</small><button id="clear" type="button">Новый чат</button></header>
+ <section id="messages" aria-label="Переписка"><p class="empty">С чего начнём?<br>Напиши сообщение ниже.</p></section>
+ <form id="form">
+  <label for="prompt" class="label">Сообщение</label>
+  <textarea id="prompt" placeholder="Спроси что-нибудь…" required></textarea>
+  <div class="actions"><span id="status" role="status">Готов к отправке</span><button id="stop" type="button" hidden>Остановить</button><button id="send" type="submit">Отправить ↗</button></div>
+  <footer>Enter — отправить · Shift + Enter — новая строка</footer>
+ </form>
+</main>
+<script>
+const form=document.querySelector('#form'),prompt=document.querySelector('#prompt'),messages=document.querySelector('#messages'),status=document.querySelector('#status'),send=document.querySelector('#send'),stop=document.querySelector('#stop'),clear=document.querySelector('#clear');
+let history=[],controller=null;
+function addMessage(role,text){
+ messages.querySelector('.empty')?.remove();
+ const article=document.createElement('article');article.className='message '+role;
+ const label=document.createElement('span');label.className='label';label.textContent=role==='user'?'Ты':'Ассистент';
+ const body=document.createElement('div');body.textContent=text;article.append(label,body);messages.append(article);return body;
+}
+function busy(value){send.disabled=value;clear.disabled=value;stop.hidden=!value;prompt.readOnly=value;messages.setAttribute('aria-busy',String(value));}
+form.addEventListener('submit',async event=>{
+ event.preventDefault();const text=prompt.value.trim();if(!text||controller)return;
+ if(location.protocol==='file:'){status.textContent='Открой интерфейс через Go-сервер: http://localhost:8080';return;}
+ const pending=[...history,{role:'user',content:text}];
+ addMessage('user',text);prompt.value='';const output=addMessage('assistant','');
+ controller=new AbortController();busy(true);status.textContent='Ожидаю ответ…';let answer='';let reader;
+ try{
+  const response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:pending}),signal:controller.signal});
+  if(!response.ok){const detail=(await response.text()).slice(0,500);throw new Error(`HTTP ${response.status}: ${detail||'Не удалось получить ответ'}`);}
+  if(!response.body)throw new Error('Браузер не предоставил поток ответа');
+  if(!(response.headers.get('Content-Type')||'').includes('text/plain'))throw new Error('Ожидается текстовый поток text/plain от /api/chat');
+  reader=response.body.getReader();const decoder=new TextDecoder();status.textContent='Ассистент пишет…';
+  while(true){const {value,done}=await reader.read();if(done)break;answer+=decoder.decode(value,{stream:true});output.textContent=answer;}
+  answer+=decoder.decode();output.textContent=answer;
+  if(!answer.trim())throw new Error('Сервер вернул пустой ответ');
+  history=[...pending,{role:'assistant',content:answer}];status.textContent='Ответ получен';
+ }catch(error){
+  if(error.name==='AbortError'){status.textContent='Генерация остановлена';if(!answer)output.textContent='Ответ остановлен.';}
+  else{status.textContent='Ошибка отправки';const note=document.createElement('p');note.className='error';note.textContent=error.message;output.append(note);}
+  prompt.value=text;
+ }finally{reader?.releaseLock();controller=null;busy(false);prompt.focus();}
+});
+stop.addEventListener('click',()=>controller?.abort());
+clear.addEventListener('click',()=>{history=[];messages.replaceChildren();const empty=document.createElement('p');empty.className='empty';empty.textContent='Новый чат. Напиши первое сообщение.';messages.append(empty);status.textContent='Готов к отправке';prompt.focus();});
+prompt.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();form.requestSubmit();}});
+</script>
+</html>
