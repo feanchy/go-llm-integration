@@ -43,16 +43,33 @@ func main() {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintf(w, "Получено сообщений: %d", len(input.Messages))
-
 		chatReq := llm.ChatRequest{
 			Model:     "openrouter/free",
 			Messages:  input.Messages,
-			MaxTokens: 500,
+			MaxTokens: 2000,
 		}
+
 		resp, err := client.ChatCompletion(r.Context(), chatReq)
-		fmt.Println(resp, err)
+		if err != nil {
+			log.Println("Ошибка OpenRouter:", err)
+			http.Error(w, "Не удалось получить ответ модели", http.StatusBadGateway)
+			return
+		}
+
+		if len(resp.Choices) == 0 {
+			http.Error(w, "Модель вернула пустой ответ", http.StatusBadGateway)
+		}
+
+		log.Println("Причина завершения:", resp.Choices[0].FinishReason)
+		log.Printf(
+			"Вход: %d, выход: %d, всего: %d",
+			resp.Usage.PromptTokens,
+			resp.Usage.CompletionTokens,
+			resp.Usage.TotalTokens,
+		)
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprintf(w, "Получено сообщений: %d", len(input.Messages))
 	})
 	log.Println("Открой http://localhost:8080")
 	log.Fatal(http.ListenAndServe("127.0.0.1:8080", nil))
