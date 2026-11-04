@@ -69,7 +69,7 @@ func main() {
 		)
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprint(w, "Получено сообщений: %d", len(input.Messages))
+		fmt.Fprint(w, resp.Choices[0].Message.Content)
 	})
 	log.Println("Открой http://localhost:8080")
 	log.Fatal(http.ListenAndServe("127.0.0.1:8080", nil))
