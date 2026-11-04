@@ -58,6 +58,7 @@ func main() {
 
 		if len(resp.Choices) == 0 {
 			http.Error(w, "Модель вернула пустой ответ", http.StatusBadGateway)
+			return
 		}
 
 		log.Println("Причина завершения:", resp.Choices[0].FinishReason)
