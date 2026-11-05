@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 )
 
 func main() {
@@ -15,6 +16,28 @@ func main() {
 	if apiKey == "" {
 		log.Fatal("OPENROUTER_API_KEY is empty")
 	}
+
+	model := os.Getenv("OPENROUTER_MODEL")
+	if model == "" {
+		log.Println("OPENROUTER_MODEL is empty, using openrouter/free")
+		model = "openrouter/free"
+	}
+
+	maxTokens := 2000
+	raw := os.Getenv("LLM_MAX_TOKENS")
+
+	if raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			log.Fatal("LLM_MAX_TOKENS must be an integer")
+		}
+		if value <= 0 {
+			log.Fatal("LLM_MAX_TOKENS must be greater than 0")
+		}
+
+		maxTokens = value
+	}
+	log.Printf("LLM config: model=%s max_tokens=%d", model, maxTokens)
 
 	client := llm.NewClient(apiKey)
 
@@ -44,9 +67,9 @@ func main() {
 		}
 
 		chatReq := llm.ChatRequest{
-			Model:     "openrouter/free",
+			Model:     model,
 			Messages:  input.Messages,
-			MaxTokens: 2000,
+			MaxTokens: maxTokens,
 		}
 
 		resp, err := client.ChatCompletion(r.Context(), chatReq)
