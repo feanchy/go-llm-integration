@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 )
 
 func main() {
@@ -72,7 +73,9 @@ func main() {
 			MaxTokens: maxTokens,
 		}
 
+		timeStart := time.Now()
 		resp, err := client.ChatCompletion(r.Context(), chatReq)
+		log.Printf("LLM request duration: %s", time.Since(timeStart))
 		if err != nil {
 			log.Println("Ошибка OpenRouter:", err)
 			http.Error(w, "Не удалось получить ответ модели", http.StatusBadGateway)
