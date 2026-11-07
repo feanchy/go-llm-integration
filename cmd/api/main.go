@@ -9,11 +9,16 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
 func main() {
+	// переменные окружения
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
-
 	if apiKey == "" {
 		log.Fatal("OPENROUTER_API_KEY is empty")
 	}
@@ -39,10 +44,42 @@ func main() {
 		maxTokens = value
 	}
 	log.Printf("LLM config: model=%s max_tokens=%d", model, maxTokens)
+	//конец переменных окружения
 
 	client := llm.NewClient(apiKey)
 
+	exporter, err := prometheus.New()
+	if err != nil {
+		log.Fatal("create metrics exporter: ", err)
+	}
+
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(exporter),
+	)
+
+	meter := meterProvider.Meter("go-llm-integration")
+
+	requestCounter, err := meter.Int64Counter("llm-requests")
+	if err != nil {
+		log.Fatal("create requests counter: ", err)
+	}
+
+	errorsCounter, err := meter.Int64Counter("llm_errors")
+	if err != nil {
+		log.Fatal("create errors counter: ", err)
+	}
+
+	durationHistogram, err := meter.Float64Histogram(
+		"llm_request_duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Duration of LLM requests"),
+	)
+	if err != nil {
+		log.Fatal("create duration histogram: ", err)
+	}
+
 	http.Handle("/", http.FileServer(http.Dir("web")))
+	http.Handle("/metrics", promhttp.Handler())
 
 	http.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -75,14 +112,20 @@ func main() {
 
 		timeStart := time.Now()
 		resp, err := client.ChatCompletion(r.Context(), chatReq)
-		log.Printf("LLM request duration: %s", time.Since(timeStart))
+		requestCounter.Add(r.Context(), 1)
+
+		duration := time.Since(timeStart)
+
+		durationHistogram.Record(r.Context(), duration.Seconds())
 		if err != nil {
+			errorsCounter.Add(r.Context(), 1)
 			log.Println("Ошибка OpenRouter:", err)
 			http.Error(w, "Не удалось получить ответ модели", http.StatusBadGateway)
 			return
 		}
 
 		if len(resp.Choices) == 0 {
+			errorsCounter.Add(r.Context(), 1)
 			http.Error(w, "Модель вернула пустой ответ", http.StatusBadGateway)
 			return
 		}
