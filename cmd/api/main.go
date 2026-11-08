@@ -9,11 +9,16 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
 func main() {
+	// переменные окружения
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
-
 	if apiKey == "" {
 		log.Fatal("OPENROUTER_API_KEY is empty")
 	}
@@ -39,10 +44,59 @@ func main() {
 		maxTokens = value
 	}
 	log.Printf("LLM config: model=%s max_tokens=%d", model, maxTokens)
+	//конец переменных окружения
 
+	//Create NewClient
 	client := llm.NewClient(apiKey)
 
+	//Metrics
+	exporter, err := prometheus.New()
+	if err != nil {
+		log.Fatal("create metrics exporter: ", err)
+	}
+
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(exporter),
+	)
+	meter := meterProvider.Meter("go-llm-integration")
+
+	//Counter for requests
+	requestCounter, err := meter.Int64Counter("llm_requests")
+	if err != nil {
+		log.Fatal("create requests counter: ", err)
+	}
+
+	//Counter for errors
+	errorsCounter, err := meter.Int64Counter("llm_errors")
+	if err != nil {
+		log.Fatal("create errors counter: ", err)
+	}
+
+	//
+	inputTokensCounter, err := meter.Int64Counter("llm_input_tokens")
+	if err != nil {
+		log.Fatal("create input token counter: ", err)
+	}
+
+	outputTokensCounter, err := meter.Int64Counter("llm_output_tokens")
+	if err != nil {
+		log.Fatal("create output token counte: ", err)
+	}
+	//
+
+	//Histogram
+	durationHistogram, err := meter.Float64Histogram(
+		"llm_request_duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Duration of LLM requests"),
+	)
+	if err != nil {
+		log.Fatal("create duration histogram: ", err)
+	}
+
+	//Handlers
 	http.Handle("/", http.FileServer(http.Dir("web")))
+	http.Handle("/metrics", promhttp.Handler())
 
 	http.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -75,17 +129,32 @@ func main() {
 
 		timeStart := time.Now()
 		resp, err := client.ChatCompletion(r.Context(), chatReq)
-		log.Printf("LLM request duration: %s", time.Since(timeStart))
+		duration := time.Since(timeStart)
+
+		requestCounter.Add(r.Context(), 1)
+		durationHistogram.Record(r.Context(), duration.Seconds())
 		if err != nil {
+			errorsCounter.Add(r.Context(), 1)
 			log.Println("Ошибка OpenRouter:", err)
 			http.Error(w, "Не удалось получить ответ модели", http.StatusBadGateway)
 			return
 		}
 
 		if len(resp.Choices) == 0 {
+			errorsCounter.Add(r.Context(), 1)
 			http.Error(w, "Модель вернула пустой ответ", http.StatusBadGateway)
 			return
 		}
+
+		inputTokensCounter.Add(
+			r.Context(),
+			int64(resp.Usage.PromptTokens),
+		)
+
+		outputTokensCounter.Add(
+			r.Context(),
+			int64(resp.Usage.CompletionTokens),
+		)
 
 		log.Println("Причина завершения:", resp.Choices[0].FinishReason)
 		log.Printf(
