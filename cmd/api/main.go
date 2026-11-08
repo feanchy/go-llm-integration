@@ -46,8 +46,10 @@ func main() {
 	log.Printf("LLM config: model=%s max_tokens=%d", model, maxTokens)
 	//конец переменных окружения
 
+	//Create NewClient
 	client := llm.NewClient(apiKey)
 
+	//Metrics
 	exporter, err := prometheus.New()
 	if err != nil {
 		log.Fatal("create metrics exporter: ", err)
@@ -56,19 +58,33 @@ func main() {
 	meterProvider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(exporter),
 	)
-
 	meter := meterProvider.Meter("go-llm-integration")
 
-	requestCounter, err := meter.Int64Counter("llm-requests")
+	//Counter for requests
+	requestCounter, err := meter.Int64Counter("llm_requests")
 	if err != nil {
 		log.Fatal("create requests counter: ", err)
 	}
 
+	//Counter for errors
 	errorsCounter, err := meter.Int64Counter("llm_errors")
 	if err != nil {
 		log.Fatal("create errors counter: ", err)
 	}
 
+	//
+	inputTokensCounter, err := meter.Int64Counter("llm_input_tokens")
+	if err != nil {
+		log.Fatal("create input token counter: ", err)
+	}
+
+	outputTokensCounter, err := meter.Int64Counter("llm_output_tokens")
+	if err != nil {
+		log.Fatal("create output token counte: ", err)
+	}
+	//
+
+	//Histogram
 	durationHistogram, err := meter.Float64Histogram(
 		"llm_request_duration",
 		metric.WithUnit("s"),
@@ -78,6 +94,7 @@ func main() {
 		log.Fatal("create duration histogram: ", err)
 	}
 
+	//Handlers
 	http.Handle("/", http.FileServer(http.Dir("web")))
 	http.Handle("/metrics", promhttp.Handler())
 
@@ -112,10 +129,9 @@ func main() {
 
 		timeStart := time.Now()
 		resp, err := client.ChatCompletion(r.Context(), chatReq)
-		requestCounter.Add(r.Context(), 1)
-
 		duration := time.Since(timeStart)
 
+		requestCounter.Add(r.Context(), 1)
 		durationHistogram.Record(r.Context(), duration.Seconds())
 		if err != nil {
 			errorsCounter.Add(r.Context(), 1)
@@ -129,6 +145,16 @@ func main() {
 			http.Error(w, "Модель вернула пустой ответ", http.StatusBadGateway)
 			return
 		}
+
+		inputTokensCounter.Add(
+			r.Context(),
+			int64(resp.Usage.PromptTokens),
+		)
+
+		outputTokensCounter.Add(
+			r.Context(),
+			int64(resp.Usage.CompletionTokens),
+		)
 
 		log.Println("Причина завершения:", resp.Choices[0].FinishReason)
 		log.Printf(
