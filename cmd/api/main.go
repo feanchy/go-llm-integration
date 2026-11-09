@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -119,6 +120,15 @@ func main() {
 		if len(input.Messages) == 0 {
 			http.Error(w, "Список сообщений пуст", http.StatusBadRequest)
 			return
+		}
+
+		//Validation
+		for _, message := range input.Messages {
+			if message.Role == "user" &&
+				strings.TrimSpace(message.Content) == "" {
+				http.Error(w, "Текст сообщения не должен быть пустым", http.StatusBadRequest)
+				return
+			}
 		}
 
 		chatReq := llm.ChatRequest{
